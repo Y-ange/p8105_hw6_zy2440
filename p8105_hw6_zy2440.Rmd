@@ -1,0 +1,108 @@
+---
+title: "p8105_hw6_zy2440"
+author: "yangzhixin"
+date: "2020/12/5"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Problem 2
+
+```{r 2}
+library(tidyverse)
+library(modelr)
+
+#Model and Plot
+bw <- read.csv("./data/birthweight.csv")
+mylm <- lm(bwt~blength+factor(babysex)+bhead+delwt+factor(frace)+factor(malform)+factor(mrace)+wtgain, data=bw)
+
+summary(mylm)
+
+bw %>% 
+  add_predictions(mylm) %>%
+  add_residuals(mylm) %>%
+  ggplot(aes(x = pred, y = resid)) + geom_point() + 
+  geom_smooth(color = "red")
+
+plot(mylm)
+
+#Compare
+m1 <- lm(bwt~blength+gaweeks, data=bw)
+m2 <- lm(bwt~bhead+blength+babysex+bhead*babysex+blength*babysex+blength*babysex+bhead*blength*babysex, data=bw)
+
+cv_df <- crossv_mc(bw,100)
+
+cv_df =
+  cv_df %>% 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble))
+
+cv_df = 
+  cv_df %>% 
+  mutate(
+    mymd  = map(train, ~mylm),
+    md1  = map(train, ~m1),
+    md2  = map(train, ~m2)) %>% 
+  mutate(
+    rmse_mymd = map2_dbl(mymd, test, ~rmse(model = .x, data = .y)),
+    rmse_md1 = map2_dbl(md1, test, ~rmse(model = .x, data = .y)),
+    rmse_md2 = map2_dbl(md2, test, ~rmse(model = .x, data = .y)))
+
+cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse)) + geom_violin()
+```
+
+For modeling, I chose the factor I thought relevant to baby weight and add them into the linear model. In the comparison, my model is almost as good as the second model with interactions. The first model with main effects only is less accurate than the other two.
+
+## Problem 3
+
+```{r 3}
+weather_df = 
+  rnoaa::meteo_pull_monitors(c("USW00094728"),var = c("PRCP", "TMIN", "TMAX"),date_min = "2017-01-01",date_max = "2017-12-31") %>%
+  mutate(name = recode(id, USW00094728 = "CentralPark_NY"),tmin = tmin / 10,tmax = tmax / 10) %>%
+  select(name, id, everything())
+
+logtimes <- function(x){
+  y = log(x[[2]][1]*x[[2]][2])
+  y
+}
+
+rsq <- function(x){
+  y=broom::glance(x)[[1]]
+}
+
+boot_straps = 
+  weather_df %>% 
+  modelr::bootstrap(n = 5000) %>%
+  mutate(
+    models = map(strap, ~lm(tmax ~ tmin, data = .x)),
+    results = map(models, broom::tidy),
+    r2 = map(models,rsq),
+    log= map(results,logtimes)) %>%
+  select(r2,log,.id)
+boot_straps <- as.data.frame(boot_straps) %>%
+  mutate(r2 = as.numeric(r2),
+         log = as.numeric(log))
+ggplot(aes(r2,log),data = boot_straps)+
+  geom_point() +
+  geom_smooth(col="red") +
+  labs(x="r^2",y="log(b0*b1)")
+
+```
+
+The diatribution is as above. $\hat r^2$ is strongly negatively related to $log(\hat \beta_0\times \hat \beta_1)$.
+
+For $\hat r^2$, 95% CI is (`r quantile(boot_straps$r2,0.025)`,`r quantile(boot_straps$r2,0.975)`
+
+For $log(\hat \beta_0\times \hat \beta_1)$, 95% CI is (`r quantile(boot_straps$log,0.025)`,`r quantile(boot_straps$log,0.975)`).
